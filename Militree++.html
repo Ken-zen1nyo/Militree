@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Militree+)</title>
+    <title>Militree+ (部隊組織図＆総合人員・目標管理)</title>
     <script src="./library/go.js"></script>
     <script src="./library/papaparse.min.js"></script>
     <style>
@@ -14,7 +14,7 @@
         
         /* 右サイドバー（部隊詳細・名簿） */
         #sidebar {
-            width: 540px; background: #fff; border-left: 1px solid #ccc;
+            width: 580px; background: #fff; border-left: 1px solid #ccc;
             box-shadow: -2px 0 5px rgba(0,0,0,0.1); display: flex; flex-direction: column;
             transform: translateX(100%); transition: transform 0.3s ease;
             position: absolute; right: 0; top: 0; height: 100%; z-index: 10;
@@ -77,6 +77,7 @@
             </div>
             <div class="control-row">
                 <strong>ノード内表示:</strong>
+                <label><input type="checkbox" class="disp-cb" id="cb-photo" checked> 顔写真</label>
                 <label><input type="checkbox" class="disp-cb" id="cb-title" checked> 役職</label>
                 <label><input type="checkbox" class="disp-cb" id="cb-branch"> 軍種</label>
                 <label><input type="checkbox" class="disp-cb" id="cb-rank" checked> 階級</label>
@@ -84,10 +85,12 @@
                 <label><input type="checkbox" class="disp-cb" id="cb-gender"> 性別</label>
                 <label><input type="checkbox" class="disp-cb" id="cb-abnormality" checked> 不在</label>
                 <label><input type="checkbox" class="disp-cb" id="cb-note"> 備考</label>
+                <label><input type="checkbox" class="disp-cb" id="cb-target"> 目標</label>
+                <label><input type="checkbox" class="disp-cb" id="cb-achievement"> 達成</label>
                 <label><input type="checkbox" class="disp-cb" id="cb-agg" checked> 集計</label>
 
                 <div style="margin-left: auto; display: flex; gap: 5px; align-items: center;">
-                    <input type="text" id="searchInput" class="search-input" placeholder="氏名、役職、部隊名で検索..." onkeydown="if(event.key==='Enter') searchNode();" />
+                    <input type="text" id="searchInput" class="search-input" placeholder="氏名、役職、部隊名、目標で検索..." onkeydown="if(event.key==='Enter') searchNode();" />
                     <button class="btn-action" onclick="searchNode()">検索</button>
                     <button class="btn-reset" onclick="clearSearch()">クリア</button>
                 </div>
@@ -116,7 +119,7 @@
             <h4 style="margin: 0 0 5px 0; font-size: 14px;">所属メンバー一覧</h4>
             <table class="member-table">
                 <thead>
-                    <tr><th>役職</th><th>階級</th><th>氏名</th><th>区分</th><th>不在</th><th>理由等</th><th>その他</th></tr>
+                    <tr><th>役職</th><th>階級</th><th>氏名</th><th>区分</th><th>不在</th><th>理由等</th><th>その他</th><th>目標</th><th>達成状況</th></tr>
                 </thead>
                 <tbody id="sidebar-member-tbody"></tbody>
             </table>
@@ -128,6 +131,9 @@
         let myDiagram;
         let allCsvData = null; 
         let currentRootOrg = null; 
+        
+        // 写真がない場合に使用するデフォルト画像 (SVG Data URI)
+        const DEFAULT_AVATAR = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='30' height='36' viewBox='0 0 24 24' fill='%23cccccc'><path d='M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z'/></svg>";
 
         function exportToSVG() {
             if (!myDiagram || myDiagram.nodes.count === 0) {
@@ -151,9 +157,7 @@
         function expandAllNodes() {
             if (!myDiagram) return;
             myDiagram.startTransaction("expand all");
-            myDiagram.nodes.each(n => {
-                if (n instanceof go.Node) n.isTreeExpanded = true;
-            });
+            myDiagram.nodes.each(n => { if (n instanceof go.Node) n.isTreeExpanded = true; });
             myDiagram.commitTransaction("expand all");
         }
 
@@ -161,9 +165,7 @@
             if (!myDiagram) return;
             myDiagram.startTransaction("expand root");
             let rootNode = null;
-            myDiagram.nodes.each(n => {
-                if (n instanceof go.Node) n.isTreeExpanded = false;
-            });
+            myDiagram.nodes.each(n => { if (n instanceof go.Node) n.isTreeExpanded = false; });
             myDiagram.nodes.each(n => {
                 if (n instanceof go.Node) {
                     let parentKey = n.data.parent;
@@ -171,20 +173,16 @@
                         n.isTreeExpanded = true;
                         rootNode = n;
                         let childrenIt = n.findTreeChildrenNodes();
-                        while (childrenIt.next()) {
-                            childrenIt.value.isTreeExpanded = true;
-                        }
+                        while (childrenIt.next()) { childrenIt.value.isTreeExpanded = true; }
                     }
                 }
             });
             myDiagram.commitTransaction("expand root");
-            if (rootNode) {
-                setTimeout(() => { myDiagram.centerRect(rootNode.actualBounds); }, 50);
-            }
+            if (rootNode) { setTimeout(() => { myDiagram.centerRect(rootNode.actualBounds); }, 50); }
         }
 
-        function generateSummaryText(members) {
-            if (!members) return "";
+        // 個々のメンバー用テキスト動的生成
+        function getMemberDispText(m) {
             const showTitle = document.getElementById('cb-title').checked;
             const showBranch = document.getElementById('cb-branch').checked;
             const showRank = document.getElementById('cb-rank').checked;
@@ -192,39 +190,46 @@
             const showGender = document.getElementById('cb-gender').checked;
             const showAbnormal = document.getElementById('cb-abnormality').checked;
             const showNote = document.getElementById('cb-note').checked;
+            const showTarget = document.getElementById('cb-target').checked;
+            const showAchieve = document.getElementById('cb-achievement').checked;
 
-            return members.map(m => {
-                let parts = [];
-                if (showTitle && m.title) parts.push(m.title);
-                if (showBranch && m.branch) parts.push("[" + m.branch + "]");
-                if (showRank && m.rank) parts.push(m.rank);
-                
-                if (m.kubunType === "欠員") {
-                    if (showName) parts.push("（欠員）");
-                } else {
-                    if (showName && m.name) parts.push(m.name);
-                    if (showGender && m.gender && m.gender !== "-") parts.push("（" + m.gender + "）");
-                }
+            let parts = [];
+            if (showTitle && m.title) parts.push(m.title);
+            if (showBranch && m.branch) parts.push("[" + m.branch + "]");
+            if (showRank && m.rank) parts.push(m.rank);
+            
+            if (m.kubunType === "欠員") {
+                if (showName) parts.push("（欠員）");
+            } else {
+                if (showName && m.name) parts.push(m.name);
+                if (showGender && m.gender && m.gender !== "-") parts.push("（" + m.gender + "）");
+            }
 
-                let text = parts.join(" ");
-                
-                if (m.kubunType === '兼務') text += ' [兼]';
-                if (showAbnormal && m.abnormality) text += ` <${m.abnormality}>`;
-                if (showNote && m.note) text += ` [${m.note}]`;
-                
-                return text.trim();
-            }).filter(t => t.length > 0).join("\n");
+            let text = parts.join(" ");
+            
+            if (m.kubunType === '兼務') text += ' [兼]';
+            if (showAbnormal && m.abnormality) text += ` <${m.abnormality}>`;
+            if (showNote && m.note) text += ` [${m.note}]`;
+            if (showTarget && m.target) text += ` 【目標:${m.target}】`;
+            if (showAchieve && m.achievement) text += ` (${m.achievement})`;
+            
+            return text.trim();
         }
 
         function updateAllNodesSummary() {
             if (!myDiagram || !myDiagram.model) return;
             myDiagram.startTransaction("update display");
             const showAgg = document.getElementById('cb-agg').checked;
+            const showPhoto = document.getElementById('cb-photo').checked;
+
             const nodeDataArray = myDiagram.model.nodeDataArray;
             nodeDataArray.forEach(data => {
                 if (data.members) {
-                    const newText = generateSummaryText(data.members);
-                    myDiagram.model.setDataProperty(data, "membersSummary", newText);
+                    data.members.forEach(m => {
+                        m.dispText = getMemberDispText(m);
+                        m.showPhoto = showPhoto;
+                    });
+                    myDiagram.model.updateTargetBindings(data);
                 }
                 myDiagram.model.setDataProperty(data, "showAgg", showAgg);
             });
@@ -414,8 +419,31 @@
                     $(go.TextBlock, { font: "10px monospace", stroke: "#bbb", margin: new go.Margin(0, 0, 2, 0) }, "--------------------",
                         new go.Binding("visible", "", d => (d.role !== "assistant") && (d.showAgg !== false))
                     ),
-                    $(go.TextBlock, { font: "11px sans-serif", stroke: "#333", margin: new go.Margin(0, 0, 0, 0) },
-                        new go.Binding("text", "membersSummary")
+                    
+                    // メンバー一覧パネル（顔写真＋文字情報）
+                    $(go.Panel, "Vertical",
+                        {
+                            alignment: go.Spot.Left,
+                            itemTemplate: $(go.Panel, "Horizontal",
+                                { margin: new go.Margin(1, 0, 1, 0), alignment: go.Spot.Left },
+                                // 顔写真表示（./images/ 自動補完）
+                                $(go.Picture,
+                                    {
+                                        width: 20, height: 24, margin: new go.Margin(0, 4, 0, 0),
+                                        imageStretch: go.GraphObject.UniformToFill, background: "#eee"
+                                    },
+                                    new go.Binding("source", "photoUrl", p => {
+                                        if (!p) return DEFAULT_AVATAR;
+                                        return (p.startsWith("http") || p.startsWith("./") || p.startsWith("images/")) ? p : "./images/" + p;
+                                    }),
+                                    new go.Binding("visible", "showPhoto", sp => sp !== false)
+                                ),
+                                $(go.TextBlock, { font: "11px sans-serif", stroke: "#333" },
+                                    new go.Binding("text", "dispText")
+                                )
+                            )
+                        },
+                        new go.Binding("itemArray", "members")
                     )
                 )
             );
@@ -445,7 +473,9 @@
                     (m.rank && normalizeString(m.rank).includes(keyword)) ||
                     (m.note && normalizeString(m.note).includes(keyword)) ||
                     (m.abnormality && normalizeString(m.abnormality).includes(keyword)) ||
-                    (m.otherCol && normalizeString(m.otherCol).includes(keyword))
+                    (m.otherCol && normalizeString(m.otherCol).includes(keyword)) ||
+                    (m.target && normalizeString(m.target).includes(keyword)) ||
+                    (m.achievement && normalizeString(m.achievement).includes(keyword))
                 )) { match = true; }
                 if (match) {
                     node.isHighlighted = true;
@@ -504,7 +534,9 @@
                 });
             }
 
+            const showPhoto = document.getElementById('cb-photo').checked;
             const orgMap = {};
+
             targetData.forEach(row => {
                 const orgName = row.部隊コード ? row.部隊コード.trim() : "";
                 const dispName = (row.部隊名 && row.部隊名.trim() !== "") ? row.部隊名.trim() : orgName;
@@ -531,7 +563,10 @@
                 
                 const abnormality = row.不在 ? row.不在.trim() : "";
                 const reason = row.理由等 ? row.理由等.trim() : "";
-                const otherCol = row.その他 ? row.その他.trim() : ""; // 【新規追加】その他カラム
+                const otherCol = row.その他 ? row.その他.trim() : "";
+                const photoUrl = row.写真 ? row.写真.trim() : "";
+                const target = row.目標 ? row.目標.trim() : "";
+                const achievement = row.達成状況 ? row.達成状況.trim() : "";
 
                 const normalizedRank = normalizeString(rank);
                 let category = "other";
@@ -542,14 +577,17 @@
                 else if (ippanList.some(i => normalizedRank.includes(i))) category = "ippan";
 
                 if (name !== "" || row.役職 || rank !== "") {
-                    orgMap[nodeKey].members.push({
+                    let mObj = {
                         id: memberId, title: row.役職, rank: rank, name: name, 
                         gender: row.性別 ? row.性別.trim() : "", branch: row.軍種 ? row.軍種.trim() : "",
                         kubunType: kubunType, note: row.備考 ? row.備考.trim() : "",
-                        category: category, 
-                        orgDispName: dispName, 
-                        abnormality: abnormality, reason: reason, otherCol: otherCol
-                    });
+                        category: category, orgDispName: dispName, 
+                        abnormality: abnormality, reason: reason, otherCol: otherCol,
+                        photoUrl: photoUrl, showPhoto: showPhoto,
+                        target: target, achievement: achievement
+                    };
+                    mObj.dispText = getMemberDispText(mObj);
+                    orgMap[nodeKey].members.push(mObj);
                 }
             });
 
@@ -568,7 +606,7 @@
                 let totalBranch = { 陸: 0, 海: 0, 空: 0, 統: 0, 内: 0, その他: 0 };
                 let totalVacancy = 0; 
                 let totalAccident = 0; 
-                let totalOther = 0; // 単体での「その他」該当者数
+                let totalOther = 0; 
 
                 let uniqueMale = 0, uniqueFemale = 0;
                 let uniqueKanbu = 0, uniqueIppan = 0, uniqueJimu = 0;
@@ -637,7 +675,7 @@
                 let aggUniqueMale = 0, aggUniqueFemale = 0, aggUniqueKanbu = 0, aggUniqueIppan = 0, aggUniqueJimu = 0;
                 let aggUniqueBranch = { 陸: 0, 海: 0, 空: 0, 統: 0, 内: 0, その他: 0 };
                 let aggTotalAccident = 0; 
-                let aggTotalOther = 0; // 配下含む全体の「その他」該当者数
+                let aggTotalOther = 0; 
 
                 allUniqueMap.forEach(m => {
                     if (m.gender === "男") aggUniqueMale++; else if (m.gender === "女") aggUniqueFemale++;
@@ -666,10 +704,7 @@
             }
 
             rootKeys.forEach(rootKey => aggregateData(rootKey));
-            const treeData = Object.keys(orgMap).map(key => {
-                const item = orgMap[key];
-                return { ...item, membersSummary: generateSummaryText(item.members) };
-            });
+            const treeData = Object.keys(orgMap).map(key => orgMap[key]);
 
             myDiagram.model = new go.TreeModel(treeData);
             expandRootAndChildren();
@@ -709,29 +744,22 @@
             }
         });
 
-        // ---------------------------------------------------------
-        // 左サイドバー（出欠・事故・その他状況表示）の実装
-        // ---------------------------------------------------------
+        // 左サイドバーの実装
         function showLeftSidebar(nodeData) {
             document.getElementById('left-sidebar-title').innerText = nodeData.dispName + " 出欠状況";
 
-            let currentCount = nodeData.aggUniqueCount; // 総員（実員数）
+            let currentCount = nodeData.aggUniqueCount; 
             let absentList = [];
             let otherList = [];
 
-            // 実員の中から事故者と「その他」該当者を抽出
             nodeData.allUniqueMap.forEach(m => {
-                if (m.abnormality && m.abnormality !== "") {
-                    absentList.push(m);
-                }
-                if (m.otherCol && m.otherCol !== "") {
-                    otherList.push(m);
-                }
+                if (m.abnormality && m.abnormality !== "") absentList.push(m);
+                if (m.otherCol && m.otherCol !== "") otherList.push(m);
             });
 
             let accidentCount = absentList.length;
             let otherCount = otherList.length;
-            let netPresent = currentCount - accidentCount; // 現在員 = 総員 - 事故
+            let netPresent = currentCount - accidentCount; 
 
             let html = `
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; font-size: 15px; line-height: 1.8; margin-bottom: 20px; border: 1px solid #e0e0e0;">
@@ -741,50 +769,36 @@
                     <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 5px 0; color: #d9534f;">
                         <span><b>事 故:</b></span><span style="font-size:16px;"><b>${accidentCount} 名</b></span>
                     </div>
-                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding-top: 5px; color: #004d40;">
-                        <span><b>現在員:</b></span><span style="font-size:16px;"><b>${netPresent} 名</b></span>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; padding-top: 5px; color: #009688;">
+                    <div style="display: flex; justify-content: space-between; border-bottom: 1px solid #ddd; padding: 5px 0; color: #009688;">
                         <span><b>その他:</b></span><span style="font-size:16px;"><b>${otherCount} 名</b></span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding-top: 5px; color: #004d40;">
+                        <span><b>現在員:</b></span><span style="font-size:16px;"><b>${netPresent} 名</b></span>
                     </div>
                 </div>
             `;
 
-            // 事故の内訳
             if (accidentCount > 0) {
                 html += `<h4 style="margin: 0 0 10px 0; font-size: 14px; border-left: 4px solid #3f51b5; padding-left: 8px;">事故の内訳</h4>`;
                 html += `<ul class="absent-list">`;
-                
                 absentList.sort((a, b) => a.orgDispName.localeCompare(b.orgDispName));
-
                 absentList.forEach(m => {
                     let reasonText = m.reason ? ` - ${m.reason}` : "";
                     let deptText = `<div style="font-size:11px; color:#666; margin-top:2px;">所属: ${m.orgDispName}</div>`;
-                    
-                    html += `<li>
-                                <div><span class="absent-tag">${m.abnormality}</span> <b>${m.rank} ${m.name}</b> ${reasonText}</div>
-                                ${deptText}
-                             </li>`;
+                    html += `<li><div><span class="absent-tag">${m.abnormality}</span> <b>${m.rank} ${m.name}</b> ${reasonText}</div>${deptText}</li>`;
                 });
                 html += `</ul><br>`;
             } else {
                 html += `<div style="font-size: 13px; color: #555; text-align: center; padding: 10px 0; background: #e8f5e9; border-radius: 4px; margin-bottom: 15px;">事故者なし</div>`;
             }
 
-            // 【新規追加】その他の内訳
             if (otherCount > 0) {
                 html += `<h4 style="margin: 0 0 10px 0; font-size: 14px; border-left: 4px solid #009688; padding-left: 8px;">その他の内訳</h4>`;
                 html += `<ul class="absent-list">`;
-                
                 otherList.sort((a, b) => a.orgDispName.localeCompare(b.orgDispName));
-
                 otherList.forEach(m => {
                     let deptText = `<div style="font-size:11px; color:#666; margin-top:2px;">所属: ${m.orgDispName}</div>`;
-                    
-                    html += `<li>
-                                <div><span class="other-tag">その他</span> <b>${m.rank} ${m.name}</b> - ${m.otherCol}</div>
-                                ${deptText}
-                             </li>`;
+                    html += `<li><div><span class="other-tag">その他</span> <b>${m.rank} ${m.name}</b> - ${m.otherCol}</div>${deptText}</li>`;
                 });
                 html += `</ul>`;
             } else {
@@ -795,13 +809,9 @@
             document.getElementById('left-sidebar').classList.add('open');
         }
 
-        function closeLeftSidebar() {
-            document.getElementById('left-sidebar').classList.remove('open');
-        }
+        function closeLeftSidebar() { document.getElementById('left-sidebar').classList.remove('open'); }
 
-        // ---------------------------------------------------------
-        // 右サイドバー（詳細・名簿）の実装
-        // ---------------------------------------------------------
+        // 右サイドバーの実装
         function showSidebar(nodeData) {
             document.getElementById('sidebar-org-title').innerText = nodeData.dispName + " の詳細";
             
@@ -831,9 +841,12 @@
                     let kubunColor = (m.kubunType === '兼務' || m.kubunType === '欠員') ? 'color: red; font-weight: bold;' : '';
                     let abnColor = m.abnormality ? 'color: #ff9800; font-weight: bold;' : '';
                     let otherColor = m.otherCol ? 'color: #009688; font-weight: bold;' : '';
+                    let achColor = (m.achievement === '達成' || m.achievement === '100%') ? 'color: #2196F3; font-weight: bold;' : '';
+                    
                     tr.innerHTML = `<td>${m.title}</td><td>${m.rank}</td><td>${m.name}</td><td><span style="${kubunColor}">${m.kubunType}</span></td>
                                     <td><span style="${abnColor}">${m.abnormality}</span></td><td>${m.reason}</td>
-                                    <td><span style="${otherColor}">${m.otherCol}</span></td>`;
+                                    <td><span style="${otherColor}">${m.otherCol}</span></td>
+                                    <td>${m.target}</td><td><span style="${achColor}">${m.achievement}</span></td>`;
                     tbody.appendChild(tr);
                 });
             }
