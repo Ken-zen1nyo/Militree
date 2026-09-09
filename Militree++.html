@@ -148,6 +148,7 @@
             <div class="control-row">
                 <input type="file" id="csvFile" accept=".csv" multiple />
                 <button class="btn-action" onclick="exportToSVG()">SVG保存</button>
+                <button class="btn-action" style="background-color: #28a745;" onclick="saveSelfContainingHTML()">データ込み保存</button>
                 <button class="btn-action" onclick="expandAllNodes()">全展開</button>
                 <button class="btn-reset" onclick="resetRootView()">全体表示に戻す</button>
                 <span id="current-focus-label" style="font-size: 12px; color: #d9534f; font-weight: bold;"></span>
@@ -230,6 +231,63 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+
+        // ① 現在のHTML構造と読み込み済みデータを保持して「名前を付けて保存」する関数
+        function saveSelfContainingHTML() {
+            if (!allCsvData || allCsvData.length === 0) {
+                alert("保存するデータがありません。先にCSVファイルを読み込んでください。");
+                return;
+            }
+
+            let fileName = prompt("保存するHTMLファイル名を入力してください:", "Militree_embedded.html");
+            if (!fileName) return;
+            if (!fileName.endsWith(".html")) fileName += ".html";
+
+            // 現在のHTMLドキュメント全体のコピーを取得
+            let docCopy = document.documentElement.cloneNode(true);
+
+            // ★【重要】GoJSが生成した属性やCanvasを完全に消し去り、真っ新なタグに置き換える
+            let diagramDiv = docCopy.querySelector("#myDiagramDiv");
+            if (diagramDiv) {
+                let freshDiv = document.createElement("div");
+                freshDiv.id = "myDiagramDiv";
+                diagramDiv.parentNode.replaceChild(freshDiv, diagramDiv);
+            }
+
+            // 埋め込み用スクリプトタグを作成してデータをセット
+            let scriptTag = docCopy.querySelector("#embedded-data-script");
+            if (!scriptTag) {
+                scriptTag = document.createElement("script");
+                scriptTag.id = "embedded-data-script";
+
+                let head = docCopy.querySelector("head");
+                head.insertBefore(scriptTag, head.firstChild);
+            }
+            scriptTag.textContent = "window.EMBEDDED_CSV_DATA = " + JSON.stringify(allCsvData) + ";";
+
+            // 完全なHTML文字列を生成
+            let htmlContent = "<!DOCTYPE html>\n<html lang=\"ja\">\n" + docCopy.innerHTML + "\n</html>";
+
+            // ファイルダウンロード処理
+            let blob = new Blob([htmlContent], { type: "text/html;charset=utf-8" });
+            let url = URL.createObjectURL(blob);
+            let a = document.createElement("a");
+            a.href = url;
+            a.download = fileName;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // ② ファイル起動時に内蔵データが存在すれば自動描画する処理
+        function checkAndLoadEmbeddedData() {
+            if (window.EMBEDDED_CSV_DATA && window.EMBEDDED_CSV_DATA.length > 0) {
+                allCsvData = window.EMBEDDED_CSV_DATA;
+                parseAndRender(allCsvData, null);
+            }
+        }
+
 
         function expandAllNodes() {
             if (!myDiagram) return;
@@ -933,6 +991,7 @@
         function closeSidebar() { document.getElementById('sidebar').classList.remove('open'); }
 
         init();
+        checkAndLoadEmbeddedData(); // ★ 埋め込みデータがあれば起動時に自動読み込み
     </script>
 </body>
 </html>
