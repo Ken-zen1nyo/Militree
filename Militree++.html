@@ -168,6 +168,9 @@
                 <label><input type="checkbox" class="disp-cb" id="cb-agg" checked> 集計</label>
 
                 <div style="margin-left: auto; display: flex; gap: 5px; align-items: center;">
+                    <span style="font-weight: bold; margin-right: 5px;">画像フォルダ:</span>
+                    <input type="text" id="imagePathInput" value="./images/" class="search-input" style="width: 150px; margin-right: 15px;" onchange="updateAllNodesSummary()" title="画像が保存されているパスを指定（例: C:/photos/ や ./images/）" />
+                    <!-- <input type="text" id="imagePathInput" value="C:/Militree/photos/" class="search-input" style="width: 250px; margin-right: 15px;" onchange="updateAllNodesSummary()" title="画像が保存されているパスを指定（例: C:/photos/ や ./images/）" /> -->
                     <input type="text" id="searchInput" class="search-input" placeholder="氏名、役職、部隊名、目標で検索..." onkeydown="if(event.key==='Enter') searchNode();" />
                     <button class="btn-action" onclick="searchNode()">検索</button>
                     <button class="btn-reset" onclick="clearSearch()">クリア</button>
@@ -245,6 +248,13 @@
 
             // 現在のHTMLドキュメント全体のコピーを取得
             let docCopy = document.documentElement.cloneNode(true);
+
+            // ★ 追加: 画像パスの指定内容をコピー側のHTMLにも定着（記憶）させる
+            let originalPathInput = document.getElementById('imagePathInput');
+            let copyPathInput = docCopy.querySelector('#imagePathInput');
+            if (originalPathInput && copyPathInput) {
+                copyPathInput.setAttribute('value', originalPathInput.value);
+            }
 
             // ★【重要】GoJSが生成した属性やCanvasを完全に消し去り、真っ新なタグに置き換える
             let diagramDiv = docCopy.querySelector("#myDiagramDiv");
@@ -528,6 +538,8 @@
                 $(go.Panel, "Vertical", 
                     new go.Binding("margin", "role", r => r === "assistant" ? new go.Margin(3, 5, 3, 5) : new go.Margin(6, 10, 6, 10)), 
                     { alignment: go.Spot.Left },
+                    
+                    // --- ▼ 部隊名と[+]ボタン（TreeExpanderButton） ▼ ---
                     $(go.Panel, "Horizontal",
                         { stretch: go.GraphObject.Horizontal, alignment: go.Spot.Left },
                         $(go.TextBlock, { font: "bold 13px sans-serif", stroke: "#222", margin: new go.Margin(0, 0, 3, 0) },
@@ -547,6 +559,8 @@
                             }
                         })
                     ),
+                    
+                    // --- ▼ ノード内の集計テキスト（規模・実員・事故など） ▼ ---
                     $(go.TextBlock, { font: "10px sans-serif", stroke: "#555", margin: new go.Margin(0, 0, 6, 0) },
                         new go.Binding("text", "", d => `規模:${d.aggTotal}名 (実員:${d.aggUniqueCount}名 / 事故:${d.aggTotalAccident}名 / その他:${d.aggTotalOther}名) \n実員内訳： 幹${d.aggUniqueKanbu} / 曹${d.aggUniqueIppan} / 事${d.aggUniqueJimu}`),
                         new go.Binding("visible", "", d => (d.role !== "assistant") && (d.showAgg !== false))
@@ -555,13 +569,13 @@
                         new go.Binding("visible", "", d => (d.role !== "assistant") && (d.showAgg !== false))
                     ),
                     
-                    // メンバー一覧パネル（顔写真＋文字情報）
+                    // --- ▼ メンバー一覧パネル（顔写真＋文字情報） ▼ ---
                     $(go.Panel, "Vertical",
                         {
                             alignment: go.Spot.Left,
                             itemTemplate: $(go.Panel, "Horizontal",
                                 { margin: new go.Margin(1, 0, 1, 0), alignment: go.Spot.Left },
-                                // 顔写真表示（./images/ 自動補完）
+                                // 顔写真表示（パス指定対応）
                                 $(go.Picture,
                                     {
                                         width: 20, height: 24, margin: new go.Margin(0, 4, 0, 0),
@@ -569,10 +583,19 @@
                                     },
                                     new go.Binding("source", "photoUrl", p => {
                                         if (!p) return DEFAULT_AVATAR;
-                                        return (p.startsWith("http") || p.startsWith("./") || p.startsWith("images/")) ? p : "./images/" + p;
+                                        if (p.startsWith("http") || p.startsWith("data:")) return p;
+                                        
+                                        // 画面の入力欄からベースとなるパスを取得
+                                        let pathInput = document.getElementById('imagePathInput');
+                                        let basePath = pathInput ? pathInput.value.trim() : "./images/";
+                                        if (basePath !== "" && !basePath.endsWith('/')) basePath += '/';
+                                        
+                                        let fileName = p.replace(/^(\.\/)?images\//, '');
+                                        return basePath + fileName;
                                     }),
                                     new go.Binding("visible", "showPhoto", sp => sp !== false)
                                 ),
+                                // 文字情報
                                 $(go.TextBlock, { font: "11px sans-serif", stroke: "#333" },
                                     new go.Binding("text", "dispText")
                                 )
